@@ -1,0 +1,20 @@
+[package]
+
+name = "pitch-detect"
+version = "0.0.0"
+authors = [
+  "Zeke Foppa <benjamin.foppa@gmail.com>",
+]
+
+[[bin]]
+name = "main"
+path = "src/mod.rs"
+
+[dependencies]
+clippy = "*"
+env_logger= "*"
+log = "*"
+time = "*"
+
+[dependencies.portaudio]
+git = "https://github.com/jeremyletang/rust-portaudio"
