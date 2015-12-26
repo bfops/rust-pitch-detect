@@ -1,5 +1,9 @@
 language: rust
 rust: nightly
 sudo: false
+addons:
+  apt:
+    packages:
+    - gsl
 
 script: cargo build && cargo test
