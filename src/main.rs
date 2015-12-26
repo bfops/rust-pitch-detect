@@ -76,7 +76,7 @@ fn errorful_main() -> Result<(), String> {
       });
 
   info!("Max index is {}", max_idx);
-  info!("Estimated frequency is {}", max_idx as f32 / buf.len() as f32 * f as f32);
+  println!("Estimated frequency is {}", max_idx as f32 / buf.len() as f32 * f as f32);
 
   Ok(())
 }
