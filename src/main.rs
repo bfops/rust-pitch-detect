@@ -8,10 +8,12 @@ fn scale_step() -> f64 {
   (2.0 as f64).powf(1.0 / 12.0)
 }
 
-fn scale_steps(f: f64) -> i32 {
-  let ratio = f / 440.0;
+/// The number of semitones above middle C of a frequency.
+fn scale_steps(f: f64) -> f64 {
+  let middle_A = 440.0;
+  let ratio = f / middle_A;
   let steps = ratio.log(scale_step());
-  steps.round() as i32
+  steps.round() + 9.0
 }
 
 fn string_err<Ok, Err: std::fmt::Display>(r: Result<Ok, Err>) -> Result<Ok, String> {
@@ -21,9 +23,9 @@ fn string_err<Ok, Err: std::fmt::Display>(r: Result<Ok, Err>) -> Result<Ok, Stri
 fn sine_wave(sample_frequency: f32, start: u32, end: u32) -> Vec<f32> {
   let mut buf = Vec::new();
 
-  let semitones_above_a = 1;
-
-  let f = (440.0 * scale_step().powf(semitones_above_a as f64)) as f32;
+  let middle_A = 440.0;
+  let semitones_above = 1;
+  let f = (middle_A * scale_step().powf(semitones_above as f64)) as f32;
 
   for t in start .. end {
     let t = t as f32 / sample_frequency;
@@ -54,7 +56,7 @@ fn play_pitch() -> Result<(), String> {
 
   let start_time = time::precise_time_ns();
   let mut i = 0;
-  while time::precise_time_ns() <= start_time + 4_000_000_000 {
+  while time::precise_time_ns() <= start_time + 2_000_000_000 {
     let buf = sine_wave(f as f32, i*buf_size, (i+1)*buf_size);
     assert!(buf.len() == buf_size as usize);
     try!(string_err(stream.write(buf, buf_size)));
@@ -69,9 +71,6 @@ fn play_pitch() -> Result<(), String> {
 
 fn display_note(note: u32) -> &'static str {
   let notes = [
-    "A",
-    "A#/Bb",
-    "B",
     "C",
     "C#/Db",
     "D",
@@ -81,6 +80,9 @@ fn display_note(note: u32) -> &'static str {
     "F#/Gb",
     "G",
     "G#/Ab",
+    "A",
+    "A#/Bb",
+    "B",
   ];
   notes[note as usize]
 }
@@ -104,7 +106,7 @@ fn record(sample_frequency: f64) -> Result<Vec<f64>, String> {
 
   let mut buf = Vec::new();
   let start_time = time::precise_time_ns();
-  while time::precise_time_ns() <= start_time + 2_000_000_000 || (buf.len() & (buf.len() - 1)) != 0 {
+  while time::precise_time_ns() <= start_time + 10_000_000 || (buf.len() & (buf.len() - 1)) != 0 {
     let new = try!(string_err(stream.read(buf_size)));
     assert!(new.len () == buf_size as usize);
     buf.extend(new.into_iter().map(|f| f as f64));
@@ -139,13 +141,19 @@ fn detect_frequency(mut samples: Vec<f64>, timestep: f64) -> Result<f64, String>
 }
 
 fn human_readable_frequency(f: f64) -> String {
-  let scale_steps = scale_steps(f);
+  let scale_steps = scale_steps(f) as i32;
 
-  info!("Estimated frequency is {} ({} semitones above middle A)", f, scale_steps);
+  let semitones_as_string = {
+    if scale_steps >= 0 {
+      format!("{} semitones above middle C", scale_steps)
+    } else {
+      format!("{} semitones below middle C", -scale_steps)
+    }
+  };
+  info!("Estimated frequency is {} ({})", f, semitones_as_string);
 
   let octave = {
-    // Octave is decided by the Cs, so make scale_steps relative to C4.
-    let scale_steps = scale_steps + 9;
+    let scale_steps = if scale_steps >= 0 { scale_steps } else { scale_steps - 12 };
     4 + scale_steps / 12
   };
   let note = {

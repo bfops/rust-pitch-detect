@@ -2,6 +2,7 @@
 #![feature(plugin)]
 
 #![plugin(clippy)]
+#![allow(non_snake_case)]
 
 extern crate time;
 #[macro_use]
