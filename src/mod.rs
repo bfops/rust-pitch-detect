@@ -8,5 +8,6 @@ extern crate time;
 extern crate log;
 extern crate env_logger;
 extern crate portaudio;
+extern crate rgsl;
 
 mod main;
