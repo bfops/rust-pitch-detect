@@ -5,5 +5,6 @@ addons:
   apt:
     packages:
     - gsl
+    - libgsl0ldbl
 
 script: cargo build && cargo test
