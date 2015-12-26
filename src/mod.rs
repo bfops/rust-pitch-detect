@@ -8,7 +8,14 @@ extern crate time;
 #[macro_use]
 extern crate log;
 extern crate env_logger;
+extern crate thread_scoped;
 extern crate portaudio;
 extern crate rgsl;
 
+mod ivar;
 mod main;
+
+mod thread {
+  pub use std::thread::*;
+  pub use thread_scoped::*;
+}

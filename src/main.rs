@@ -3,6 +3,8 @@ use time;
 use env_logger;
 use portaudio;
 use rgsl;
+use thread;
+use ivar;
 
 fn scale_step() -> f64 {
   (2.0 as f64).powf(1.0 / 12.0)
@@ -117,14 +119,14 @@ fn record(sample_frequency: f64) -> Result<Vec<f64>, String> {
   Ok(buf)
 }
 
-fn detect_frequency(mut samples: Vec<f64>, timestep: f64) -> Result<f64, String> {
+fn detect_frequency(mut samples: Vec<f64>, timestep: f64) -> Result<Option<f64>, String> {
   let len = samples.len();
   let r = rgsl::fft::real_radix2::transform(&mut samples, 1, len);
   if r != rgsl::Value::Success {
     return Err(format!("rgsl returned {:?}", r));
   }
 
-  let (max_idx, _max_val) =
+  let (max_idx, max_value) =
     samples.iter()
       .enumerate()
       .take(len / 2)
@@ -137,7 +139,15 @@ fn detect_frequency(mut samples: Vec<f64>, timestep: f64) -> Result<f64, String>
       });
 
   debug!("Max index is {}", max_idx);
-  Ok(max_idx as f64 / samples.len() as f64 / timestep)
+  debug!("Max value is {}", max_value);
+
+  let f =
+    if max_value >= 5.0 {
+      Some(max_idx as f64 / samples.len() as f64 / timestep)
+    } else {
+      None
+    };
+  Ok(f)
 }
 
 fn human_readable_frequency(f: f64) -> String {
@@ -173,17 +183,37 @@ fn human_readable_frequency(f: f64) -> String {
   }
 }
 
-fn detect_pitch() -> Result<(), String> {
+fn detect_pitch_main() -> Result<(), String> {
   let sample_frequency = 44100.0;
-  let samples = try!(record(sample_frequency));
+  let samples = ivar::new();
 
-  info!("Collected {} samples", samples.len());
+  let _record_thread =
+    unsafe {
+      thread::scoped(|| {
+        loop {
+          let new_samples = record(sample_frequency).unwrap();
+          info!("Collected {} samples", new_samples.len());
+          samples.overwrite(new_samples);
+        }
+      })
+    };
 
-  info!("Detecting pitch..");
+  let _detect_thread =
+    unsafe {
+      thread::scoped(|| {
+        info!("Detecting pitch..");
 
-  let f = try!(detect_frequency(samples, 1.0 / sample_frequency));
-
-  println!("Estimated note is {}", human_readable_frequency(f));
+        loop {
+          let samples = samples.take();
+          match detect_frequency(samples, 1.0 / sample_frequency).unwrap() {
+            None => {},
+            Some(f) => {
+              println!("Estimated note is {}", human_readable_frequency(f));
+            },
+          }
+        }
+      })
+    };
 
   Ok(())
 }
@@ -192,7 +222,7 @@ fn errorful_main() -> Result<(), String> {
   try!(string_err(env_logger::init()));
   try!(string_err(portaudio::pa::initialize()));
 
-  try!(detect_pitch());
+  try!(detect_pitch_main());
 
   Ok(())
 }
