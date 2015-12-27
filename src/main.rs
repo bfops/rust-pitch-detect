@@ -4,7 +4,7 @@ use env_logger;
 use portaudio;
 use rgsl;
 use thread;
-use ivar;
+use mvar;
 
 fn scale_step() -> f64 {
   (2.0 as f64).powf(1.0 / 12.0)
@@ -185,7 +185,7 @@ fn human_readable_frequency(f: f64) -> String {
 
 fn detect_pitch_main() -> Result<(), String> {
   let sample_frequency = 44100.0;
-  let samples = ivar::new();
+  let samples = mvar::new();
 
   let _record_thread =
     unsafe {

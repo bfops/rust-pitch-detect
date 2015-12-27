@@ -12,7 +12,7 @@ extern crate thread_scoped;
 extern crate portaudio;
 extern crate rgsl;
 
-mod ivar;
+mod mvar;
 mod main;
 
 mod thread {
