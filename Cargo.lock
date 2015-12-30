@@ -6,6 +6,7 @@ dependencies = [
  "clap 1.5.4 (git+https://github.com/kbknapp/clap-rs)",
  "clippy 0.0.33 (registry+https://github.com/rust-lang/crates.io-index)",
  "env_logger 0.3.2 (registry+https://github.com/rust-lang/crates.io-index)",
+ "gnuplot 0.0.20 (registry+https://github.com/rust-lang/crates.io-index)",
  "log 0.3.4 (registry+https://github.com/rust-lang/crates.io-index)",
  "portaudio 0.5.1 (git+https://github.com/jeremyletang/rust-portaudio)",
  "thread-scoped 1.0.1 (registry+https://github.com/rust-lang/crates.io-index)",
@@ -81,6 +82,11 @@ dependencies = [
  "log 0.3.4 (registry+https://github.com/rust-lang/crates.io-index)",
  "regex 0.1.44 (registry+https://github.com/rust-lang/crates.io-index)",
 ]
+
+[[package]]
+name = "gnuplot"
+version = "0.0.20"
+source = "registry+https://github.com/rust-lang/crates.io-index"
 
 [[package]]
 name = "kernel32-sys"

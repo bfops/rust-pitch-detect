@@ -3,10 +3,14 @@ use env_logger;
 use time;
 use portaudio;
 use rgsl;
+#[cfg(feature="gnuplot")]
+use gnuplot;
 
 use thread;
 use note;
 use mvar;
+
+fn consume<T>(_: T) {}
 
 fn string_err<Ok, Err: std::fmt::Display>(r: Result<Ok, Err>) -> Result<Ok, String> {
   r.map_err(|err| format!("{}", err))
@@ -78,7 +82,7 @@ fn record(sample_frequency: f64) -> Result<Vec<f64>, String> {
 
   let mut buf = Vec::new();
   let start_time = time::precise_time_ns();
-  while time::precise_time_ns() <= start_time + 10_000_000 || (buf.len() & (buf.len() - 1)) != 0 {
+  while time::precise_time_ns() <= start_time + 100_000_000 || (buf.len() & (buf.len() - 1)) != 0 {
     let new = try!(string_err(stream.read(buf_size)));
     assert!(new.len () == buf_size as usize);
     buf.extend(new.into_iter().map(|f| f as f64));
@@ -90,36 +94,70 @@ fn record(sample_frequency: f64) -> Result<Vec<f64>, String> {
 }
 
 fn detect_frequency(mut samples: Vec<f64>, timestep: f64) -> Result<Option<f64>, String> {
-  let len = samples.len();
-  let r = rgsl::fft::real_radix2::transform(&mut samples, 1, len);
+  let num_samples = samples.len();
+  let r = rgsl::fft::real_radix2::transform(&mut samples, 1, num_samples);
   if r != rgsl::Value::Success {
     return Err(format!("rgsl returned {:?}", r));
   }
 
-  let (max_idx, max_value) =
-    samples.iter()
-      .enumerate()
-      .take(len / 2)
-      .fold((0, 0.0), |(max_idx, max_val), (i, val)| {
-        if *val > max_val {
-          (i, *val)
+  let buckets: Vec<_> =
+    (0 .. 1 + num_samples / 2)
+    .filter_map(|i| {
+      let real = samples[i];
+      let imag =
+        if i % num_samples / 2 == 0 {
+          0.0
         } else {
-          (max_idx, max_val)
+          samples[num_samples - i]
+        };
+
+      let noise_threshold = 0.0;
+      let x = real*real + imag*imag - noise_threshold;
+      if x > noise_threshold {
+        let f = i as f64 / num_samples as f64 / timestep;
+        Some((f, x))
+      } else {
+        None
+      }
+    })
+    .collect();
+  consume(samples);
+
+  if buckets.is_empty() {
+    return Ok(None)
+  }
+
+  #[cfg(feature="gnuplot")]
+  {
+    let x: Vec<_> = buckets.iter().map(|&(f, _)| f).collect();
+    let y: Vec<_> = buckets.iter().map(|&(_, y)| y).collect();
+    let mut fg = gnuplot::Figure::new();
+    fg
+      .axes2d()
+      .boxes(
+        &x,
+        &y,
+        &[],
+      );
+    fg.echo_to_file("/tmp/gnuplot.txt");
+  }
+
+  let (max_f, max_val) =
+    buckets.iter()
+      .fold((0.0, 0.0), |(max_f, max_val), &(f, amp)| {
+        let val = amp;
+        if val > max_val {
+          (f, val)
+        } else {
+          (max_f, max_val)
         }
       });
 
-  debug!("Max index is {}", max_idx);
-  debug!("Max value is {}", max_value);
+  debug!("Max index is {}", max_f);
+  debug!("Max value is {}", max_val);
 
-  let f =
-    if max_value >= 5.0 {
-      Some(max_idx as f64 / samples.len() as f64 / timestep)
-    } else {
-      None
-    };
-  Ok(f)
+  Ok(Some(max_f))
 }
-
 
 fn detect_pitch_main() -> Result<(), String> {
   let sample_frequency = 44100.0;

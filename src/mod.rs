@@ -1,4 +1,5 @@
 #![feature(main)]
+#![feature(stmt_expr_attributes)]
 #![feature(plugin)]
 
 #![plugin(clippy)]
@@ -14,6 +15,8 @@ extern crate time;
 extern crate clap;
 extern crate portaudio;
 extern crate rgsl;
+#[cfg(feature="gnuplot")]
+extern crate gnuplot;
 
 mod mvar;
 mod note;

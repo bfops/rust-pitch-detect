@@ -6,6 +6,11 @@ authors = [
   "Zeke Foppa <benjamin.foppa@gmail.com>",
 ]
 
+[features]
+default = []
+
+use-gnuplot = ["gnuplot"]
+
 [[bin]]
 name = "main"
 path = "src/mod.rs"
@@ -17,6 +22,10 @@ log = "*"
 thread-scoped = "*"
 time = "*"
 GSL = "*"
+
+[dependencies.gnuplot]
+version = "*"
+optional = true
 
 [dependencies.clap]
 git = "https://github.com/kbknapp/clap-rs"
