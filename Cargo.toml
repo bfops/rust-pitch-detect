@@ -18,5 +18,8 @@ thread-scoped = "*"
 time = "*"
 GSL = "*"
 
+[dependencies.clap]
+git = "https://github.com/kbknapp/clap-rs"
+
 [dependencies.portaudio]
 git = "https://github.com/jeremyletang/rust-portaudio"
