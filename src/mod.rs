@@ -3,6 +3,7 @@
 
 #![plugin(clippy)]
 #![allow(non_snake_case)]
+#![deny(warnings)]
 
 #[macro_use]
 extern crate log;
