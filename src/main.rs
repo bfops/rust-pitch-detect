@@ -193,20 +193,20 @@ fn detect_frequency(samples: Vec<f64>, timestep: f64) -> Result<Option<f64>, Str
 }
 
 fn harmony(fft: &[f64], semitones_up: f64) -> Vec<f64> {
-  let num_samples = fft.len();
+  let len = fft.len();
+  let shift_factor: f64 = (2.0 as f64).powf(semitones_up / 12.0);
 
-  let shift_factor: f64 = (2.0 as f64).powf(-semitones_up / 12.0);
-
-  let mut shifted_fft: Vec<_> = std::iter::repeat(0.0).take(num_samples).collect();
-  for i in 1..(num_samples / 2) {
-    let source_i = (i as f64 * shift_factor).round() as usize;
-    shifted_fft[i] = shifted_fft[i] + fft[source_i];
-    shifted_fft[num_samples - i] = shifted_fft[num_samples - i] + fft[num_samples - source_i];
+  let mut shifted_fft: Vec<_> = std::iter::repeat(0.0).take(len).collect();
+  for i in 1..(len / 2) {
+    let source_i = (i as f64 / shift_factor).round() as usize;
+    if source_i >= len / 2 {
+      break
+    }
+    shifted_fft[i] += fft[source_i];
+    shifted_fft[len - i] += fft[len - source_i];
   }
 
-  // This might be broken for nonzero shifts?
   shifted_fft[0] = fft[0];
-  shifted_fft[num_samples / 2] = fft[num_samples / 2];
 
   shifted_fft
 }
@@ -250,11 +250,13 @@ fn detect_pitch_main() -> Result<(), String> {
 
 fn add_harmonies(samples: Vec<f64>, semitones: &[f64]) -> Result<Vec<f64>, String> {
   let len = samples.len();
+
   let original_fft = try!(to_fft(samples));
   let mut fft = original_fft.clone();
 
   for &semitones in semitones {
     let harmony = harmony(&original_fft, semitones);
+    assert!(fft.len() == harmony.len());
     for i in 0 .. len {
       fft[i] += harmony[i];
     }
@@ -263,44 +265,47 @@ fn add_harmonies(samples: Vec<f64>, semitones: &[f64]) -> Result<Vec<f64>, Strin
   let fft = fft.into_iter().map(|f| f / semitones.len() as f64).collect();
 
   let samples = try!(of_fft(fft));
+
   Ok(samples)
 }
 
 fn harmony_main(semitones: Vec<f64>) -> Result<(), String> {
-  let sample_frequency = 44100.0;
+  let sample_rate = 44100.0;
+  let buf_size = 1 << 14;
 
-  let samples = record(sample_frequency, 1_000_000_000).unwrap();
-  info!("Collected {} samples", samples.len());
+  let samples = record(sample_rate, 2_000_000_000).unwrap();
+  let len = samples.len() as u32;
+  info!("Collected {} samples", len);
+  let mut samples = samples.into_iter();
 
-  let samples = try!(add_harmonies(samples, &semitones));
-  let mut samples = samples.into_iter().map(|f| f as f32);
+  let mut play_buffer: Vec<Vec<f32>> = Vec::new();
+  loop {
+    let mut snip = Vec::new();
+    for _ in 0..buf_size {
+      match samples.next() {
+        None => break,
+        Some(x) => snip.push(x),
+      }
+    }
 
-  let sample_rate = 44100 as f64;
-  let buf_size = 1 << 10;
+    if snip.len() < buf_size as usize {
+      break
+    }
+
+    let snip = try!(add_harmonies(snip, &semitones));
+    let snip = snip.into_iter().map(|f| f as f32).collect();
+    play_buffer.push(snip);
+  }
 
   try!(with_play_channel(
     sample_rate,
     buf_size,
     |stream| {
-      loop {
-        let mut snip = Vec::new();
-        for _ in 0..buf_size {
-          match samples.next() {
-            None => break,
-            Some(x) => snip.push(x),
-          }
-        }
-
-        if snip.is_empty() {
-          break
-        }
-
-        let len = snip.len();
-        try!(string_err(stream.write(snip, len as u32)));
+      for snip in play_buffer {
+        try!(string_err(stream.write(snip, buf_size)));
       }
-
       Ok(())
-    }
+    },
   ));
 
   Ok(())
@@ -332,8 +337,7 @@ fn errorful_main() -> Result<(), String> {
   } else if let Some(_matches) = matches.subcommand_matches("detect") {
     try!(detect_pitch_main());
   } else if let Some(_harmony) = matches.subcommand_matches("harmony") {
-    //let semitones = vec!(4, 7, 12);
-    let semitones = vec!(4.0);
+    let semitones = vec!(4.0, 7.0);
     try!(harmony_main(semitones));
   }
 
