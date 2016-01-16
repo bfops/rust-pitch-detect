@@ -4,6 +4,7 @@
 
 #![plugin(clippy)]
 #![allow(non_snake_case)]
+#![allow(let_and_return)]
 #![deny(warnings)]
 
 #[macro_use]

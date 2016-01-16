@@ -12,6 +12,26 @@ use mvar;
 
 fn consume<T>(_: T) {}
 
+fn to_fft(mut samples: Vec<f64>) -> Result<Vec<f64>, String> {
+  let len = samples.len();
+  let r = rgsl::fft::real_radix2::transform(&mut samples, 1, len);
+  if r != rgsl::Value::Success {
+    return Err(format!("rgsl returned {:?}", r));
+  }
+
+  Ok(samples)
+}
+
+fn of_fft(mut fft: Vec<f64>) -> Result<Vec<f64>, String> {
+  let len = fft.len();
+  let r = rgsl::fft::real_radix2::inverse(&mut fft, 1, len);
+  if r != rgsl::Value::Success {
+    return Err(format!("rgsl returned {:?}", r));
+  }
+
+  Ok(fft)
+}
+
 fn string_err<Ok, Err: std::fmt::Display>(r: Result<Ok, Err>) -> Result<Ok, String> {
   r.map_err(|err| format!("{}", err))
 }
@@ -31,12 +51,9 @@ fn sine_wave(note: note::T, sample_frequency: f64, start: u32, end: u32) -> Vec<
   buf
 }
 
-fn play_note(note: note::T, secs: u64) -> Result<(), String> {
-  info!("Writing..");
-
-  let sample_rate = 44100 as f64;
-  let buf_size = 1 << 10;
-
+fn with_play_channel<T, F>(sample_rate: f64, buf_size: u32, f: F) -> Result<T, String> where
+  F: FnOnce(&mut portaudio::pa::Stream<f32, f32>) -> Result<T, String>,
+{
   let mut stream: portaudio::pa::Stream<f32, f32> = portaudio::pa::Stream::new();
   try!(string_err(
     stream.open_default_blocking(
@@ -48,22 +65,41 @@ fn play_note(note: note::T, secs: u64) -> Result<(), String> {
     )));
   try!(string_err(stream.start()));
 
-  let start_time = time::precise_time_ns();
-  let mut i = 0;
-  while time::precise_time_ns() <= start_time + secs*1_000_000_000 {
-    let buf = sine_wave(note, sample_rate, i*buf_size, (i+1)*buf_size);
-    assert!(buf.len() == buf_size as usize);
-    try!(string_err(stream.write(buf, buf_size)));
-
-    i = i + 1;
-  }
+  let r = try!(f(&mut stream));
 
   try!(string_err(stream.stop()));
+
+  Ok(r)
+}
+
+fn play_note(note: note::T, secs: u64) -> Result<(), String> {
+  info!("Writing..");
+
+  let sample_rate = 44100 as f64;
+  let buf_size = 1 << 10;
+
+  try!(with_play_channel(
+    sample_rate,
+    buf_size,
+    |stream| {
+      let start_time = time::precise_time_ns();
+      let mut i = 0;
+      while time::precise_time_ns() <= start_time + secs*1_000_000_000 {
+        let buf = sine_wave(note, sample_rate, i*buf_size, (i+1)*buf_size);
+        assert!(buf.len() == buf_size as usize);
+        try!(string_err(stream.write(buf, buf_size)));
+
+        i = i + 1;
+      }
+
+      Ok(())
+    }
+  ));
 
   Ok(())
 }
 
-fn record(sample_frequency: f64) -> Result<Vec<f64>, String> {
+fn record(sample_frequency: f64, delta_t_ns: u64) -> Result<Vec<f64>, String> {
   let buf_size = 1 << 10;
   assert!(buf_size & (buf_size - 1) == 0);
 
@@ -82,7 +118,7 @@ fn record(sample_frequency: f64) -> Result<Vec<f64>, String> {
 
   let mut buf = Vec::new();
   let start_time = time::precise_time_ns();
-  while time::precise_time_ns() <= start_time + 100_000_000 || (buf.len() & (buf.len() - 1)) != 0 {
+  while time::precise_time_ns() <= start_time + delta_t_ns || (buf.len() & (buf.len() - 1)) != 0 {
     let new = try!(string_err(stream.read(buf_size)));
     assert!(new.len () == buf_size as usize);
     buf.extend(new.into_iter().map(|f| f as f64));
@@ -93,12 +129,9 @@ fn record(sample_frequency: f64) -> Result<Vec<f64>, String> {
   Ok(buf)
 }
 
-fn detect_frequency(mut samples: Vec<f64>, timestep: f64) -> Result<Option<f64>, String> {
+fn detect_frequency(samples: Vec<f64>, timestep: f64) -> Result<Option<f64>, String> {
   let num_samples = samples.len();
-  let r = rgsl::fft::real_radix2::transform(&mut samples, 1, num_samples);
-  if r != rgsl::Value::Success {
-    return Err(format!("rgsl returned {:?}", r));
-  }
+  let samples = try!(to_fft(samples));
 
   let buckets: Vec<_> =
     (0 .. 1 + num_samples / 2)
@@ -159,6 +192,25 @@ fn detect_frequency(mut samples: Vec<f64>, timestep: f64) -> Result<Option<f64>,
   Ok(Some(max_f))
 }
 
+fn harmony(fft: &[f64], semitones_up: f64) -> Vec<f64> {
+  let num_samples = fft.len();
+
+  let shift_factor: f64 = (2.0 as f64).powf(-semitones_up / 12.0);
+
+  let mut shifted_fft: Vec<_> = std::iter::repeat(0.0).take(num_samples).collect();
+  for i in 1..(num_samples / 2) {
+    let source_i = (i as f64 * shift_factor).round() as usize;
+    shifted_fft[i] = shifted_fft[i] + fft[source_i];
+    shifted_fft[num_samples - i] = shifted_fft[num_samples - i] + fft[num_samples - source_i];
+  }
+
+  // This might be broken for nonzero shifts?
+  shifted_fft[0] = fft[0];
+  shifted_fft[num_samples / 2] = fft[num_samples / 2];
+
+  shifted_fft
+}
+
 fn detect_pitch_main() -> Result<(), String> {
   let sample_frequency = 44100.0;
   let samples = mvar::new();
@@ -167,7 +219,7 @@ fn detect_pitch_main() -> Result<(), String> {
     unsafe {
       thread::scoped(|| {
         loop {
-          let new_samples = record(sample_frequency).unwrap();
+          let new_samples = record(sample_frequency, 100_000_000).unwrap();
           info!("Collected {} samples", new_samples.len());
           samples.overwrite(new_samples);
         }
@@ -196,6 +248,60 @@ fn detect_pitch_main() -> Result<(), String> {
   Ok(())
 }
 
+fn harmony_main(semitones: Vec<f64>) -> Result<(), String> {
+  let sample_frequency = 44100.0;
+
+  let samples = record(sample_frequency, 1_000_000_000).unwrap();
+  info!("Collected {} samples", samples.len());
+
+  let len = samples.len();
+  let original_fft = try!(to_fft(samples));
+  let mut fft = original_fft.clone();
+
+  for &semitones in &semitones {
+    let harmony = harmony(&original_fft, semitones);
+    for i in 0 .. len {
+      fft[i] += harmony[i];
+    }
+  }
+
+  let fft = fft.into_iter().map(|f| f / semitones.len() as f64).collect();
+
+  let samples = try!(of_fft(fft));
+
+  let mut samples = samples.into_iter().map(|f| f as f32);
+
+  let sample_rate = 44100 as f64;
+  let buf_size = 1 << 10;
+
+  try!(with_play_channel(
+    sample_rate,
+    buf_size,
+    |stream| {
+      loop {
+        let mut snip = Vec::new();
+        for _ in 0..buf_size {
+          match samples.next() {
+            None => break,
+            Some(x) => snip.push(x),
+          }
+        }
+
+        if snip.is_empty() {
+          break
+        }
+
+        let len = snip.len();
+        try!(string_err(stream.write(snip, len as u32)));
+      }
+
+      Ok(())
+    }
+  ));
+
+  Ok(())
+}
+
 fn errorful_main() -> Result<(), String> {
   try!(string_err(env_logger::init()));
   try!(string_err(portaudio::pa::initialize()));
@@ -210,6 +316,9 @@ fn errorful_main() -> Result<(), String> {
       (@subcommand detect =>
         (about: "Detect pitch from the microphone")
       )
+      (@subcommand harmony =>
+        (about: "Add harmony to a recorded clip")
+      )
     ).get_matches();
 
   if let Some(matches) = matches.subcommand_matches("play") {
@@ -218,6 +327,10 @@ fn errorful_main() -> Result<(), String> {
     try!(play_note(note, duration));
   } else if let Some(_matches) = matches.subcommand_matches("detect") {
     try!(detect_pitch_main());
+  } else if let Some(_harmony) = matches.subcommand_matches("harmony") {
+    //let semitones = vec!(4, 7, 12);
+    let semitones = vec!(4.0);
+    try!(harmony_main(semitones));
   }
 
   Ok(())
