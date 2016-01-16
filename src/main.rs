@@ -248,17 +248,12 @@ fn detect_pitch_main() -> Result<(), String> {
   Ok(())
 }
 
-fn harmony_main(semitones: Vec<f64>) -> Result<(), String> {
-  let sample_frequency = 44100.0;
-
-  let samples = record(sample_frequency, 1_000_000_000).unwrap();
-  info!("Collected {} samples", samples.len());
-
+fn add_harmonies(samples: Vec<f64>, semitones: &[f64]) -> Result<Vec<f64>, String> {
   let len = samples.len();
   let original_fft = try!(to_fft(samples));
   let mut fft = original_fft.clone();
 
-  for &semitones in &semitones {
+  for &semitones in semitones {
     let harmony = harmony(&original_fft, semitones);
     for i in 0 .. len {
       fft[i] += harmony[i];
@@ -268,7 +263,16 @@ fn harmony_main(semitones: Vec<f64>) -> Result<(), String> {
   let fft = fft.into_iter().map(|f| f / semitones.len() as f64).collect();
 
   let samples = try!(of_fft(fft));
+  Ok(samples)
+}
 
+fn harmony_main(semitones: Vec<f64>) -> Result<(), String> {
+  let sample_frequency = 44100.0;
+
+  let samples = record(sample_frequency, 1_000_000_000).unwrap();
+  info!("Collected {} samples", samples.len());
+
+  let samples = try!(add_harmonies(samples, &semitones));
   let mut samples = samples.into_iter().map(|f| f as f32);
 
   let sample_rate = 44100 as f64;
